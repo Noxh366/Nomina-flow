@@ -256,6 +256,7 @@ var S={
   tab:'emp', period:'quincenal', search:'',
   rpNombre:'', rpIni:isoIni(), rpFin:isoHoy(),
   bonos:{},        // { empId: monto } — bonos del periodo actual en cálculo
+  prestamos:{},    // { empId: monto } — descuento préstamo del periodo actual
   modalType:null, editId:null,
   detId:null, detPer:'mensual'
 };
@@ -358,6 +359,7 @@ function pageEmp(){
 // CÁLCULO DE NÓMINA (con bonos)
 // ═══════════════════════════════════════
 function getBono(id){ return r2(Number(S.bonos[id])||0); }
+function getPrestamo(id){ return r2(Number(S.prestamos[id])||0); }
 
 function setBono(id, val){
   S.bonos[id]=r2(Number(val)||0);
@@ -369,24 +371,26 @@ function setBono(id, val){
 
 function recalcTotals(){
   var p=S.period;
-  var tNeto=0,tISR=0,tOb=0,tCosto=0,tBono=0,tNetoFinal=0;
+  var tNeto=0,tISR=0,tOb=0,tCosto=0,tBono=0,tNetoFinal=0,tPrest=0;
   S.emp.forEach(function(e){
     var bon=getBono(e.id);
+    var prest=getPrestamo(e.id);
     var r=calcNomina(e.nominal,e.total,p,bon);
+    var netoConPrest=r2(r.netoFinal - prest);
     tNeto+=r.netoBase; tISR+=r.isrNeto; tOb+=r.ob.total;
-    tCosto+=r.costo; tBono+=bon; tNetoFinal+=r.netoFinal;
+    tCosto+=r.costo; tBono+=bon; tNetoFinal+=netoConPrest; tPrest+=prest;
     // actualizar fila
-    var cells=['_tneto_'+e.id,'_tbono_'+e.id,'_tfinal_'+e.id,'_tcosto_'+e.id];
-    var vals=[fmt(r.netoBase),fmt(bon),fmt(r.netoFinal),fmt(r.costo)];
+    var cells=['_tneto_'+e.id,'_tbono_'+e.id,'_tprest_'+e.id,'_tfinal_'+e.id,'_tcosto_'+e.id];
+    var vals=[fmt(r.netoBase),fmt(bon),fmt(prest),fmt(netoConPrest),fmt(r.costo)];
     cells.forEach(function(cid,i){
       var el=document.getElementById(cid);
       if(el) el.textContent=vals[i];
     });
   });
   // totales de la tabla
-  ['_tot_netobase','_tot_bono','_tot_neto','_tot_costo'].forEach(function(id,i){
+  ['_tot_netobase','_tot_bono','_tot_prest','_tot_neto','_tot_costo'].forEach(function(id,i){
     var el=document.getElementById(id);
-    if(el) el.textContent=[fmt(tNeto),fmt(tBono),fmt(tNetoFinal),fmt(tCosto)][i];
+    if(el) el.textContent=[fmt(tNeto),fmt(tBono),fmt(tPrest),fmt(tNetoFinal),fmt(tCosto)][i];
   });
   // stats cards
   var statsMap={
@@ -401,13 +405,15 @@ function recalcTotals(){
 
 function pageCalc(){
   var p=S.period;
-  var tNeto=0,tISR=0,tOb=0,tCosto=0,tBono=0,tNetoFinal=0;
+  var tNeto=0,tISR=0,tOb=0,tCosto=0,tBono=0,tNetoFinal=0,tPrest=0;
   var rows='';
   S.emp.forEach(function(e){
     var bon=getBono(e.id);
+    var prest=getPrestamo(e.id);
     var r=calcNomina(e.nominal,e.total,p,bon);
+    var netoConPrest=r2(r.netoFinal - prest);
     tNeto+=r.netoBase; tISR+=r.isrNeto; tOb+=r.ob.total;
-    tCosto+=r.costo; tBono+=bon; tNetoFinal+=r.netoFinal;
+    tCosto+=r.costo; tBono+=bon; tNetoFinal+=netoConPrest; tPrest+=prest;
     rows+='<tr>'+
       '<td><div style="display:flex;align-items:center;gap:8px">'+
         '<div class="av" style="width:24px;height:24px;font-size:9px;background:'+avc(e.nombre)+'">'+ini(e.nombre)+'</div>'+
@@ -427,7 +433,16 @@ function pageCalc(){
         '</div>'+
       '</td>'+
       '<td class="num ctl" style="font-weight:500" id="_tbono_'+e.id+'">'+fmt(bon)+'</td>'+
-      '<td class="num cbl" style="font-weight:500;font-size:13px" id="_tfinal_'+e.id+'">'+fmt(r.netoFinal)+'</td>'+
+      '<td>'+
+        '<div class="fw" style="width:120px">'+
+          '<span class="fws">$</span>'+
+          '<input type="number" id="prest_'+e.id+'" min="0" step="0.01" value="'+(prest||'')+'" '+
+            'oninput="S.prestamos[\''+e.id+'\']=parseFloat(this.value)||0;recalcTotals()" '+
+            'style="padding:4px 6px 4px 18px;font-size:12px;font-family:\'IBM Plex Mono\',monospace;border-radius:6px;border:1px solid #fecaca;color:var(--red);width:100%">'+
+        '</div>'+
+      '</td>'+
+      '<td class="num crd" style="font-weight:500" id="_tprest_'+e.id+'">'+fmt(prest)+'</td>'+
+      '<td class="num cbl" style="font-weight:500;font-size:13px" id="_tfinal_'+e.id+'">'+fmt(netoConPrest)+'</td>'+
       '<td class="num cpr" style="font-size:11px" id="_tcosto_'+e.id+'">'+fmt(r.costo)+'</td>'+
       '<td><button class="btn sm" onclick="openDetCalc(\''+e.id+'\',\''+p+'\')">Detalle</button></td>'+
     '</tr>';
@@ -439,13 +454,15 @@ function pageCalc(){
     : '<div style="overflow-x:auto"><table><thead><tr>'+
         '<th>Empleado</th><th>Nómina Hacienda</th><th>Sueldo libre</th>'+
         '<th>ISR</th><th>IMSS obrero</th><th>Neto base</th>'+
-        '<th>Bono (libre imp.)</th><th>Bono $</th><th>Neto final</th><th>Costo empresa</th><th></th>'+
+        '<th>Bono (libre imp.)</th><th>Bono $</th><th>Desc. Préstamo</th><th>Préstamo $</th><th>Neto final</th><th>Costo empresa</th><th></th>'+
       '</tr></thead><tbody>'+rows+'</tbody>'+
       '<tfoot><tr style="background:var(--bg);font-weight:500">'+
         '<td colspan="5" style="padding:9px 10px">Totales del periodo</td>'+
         '<td class="num cbl" style="padding:9px 10px" id="_tot_netobase">'+fmt(tNeto)+'</td>'+
         '<td colspan="1"></td>'+
         '<td class="num ctl" style="padding:9px 10px" id="_tot_bono">'+fmt(tBono)+'</td>'+
+        '<td colspan="1"></td>'+
+        '<td class="num crd" style="padding:9px 10px" id="_tot_prest">'+fmt(tPrest)+'</td>'+
         '<td class="num cbl" style="padding:9px 10px;font-size:14px" id="_tot_neto">'+fmt(tNetoFinal)+'</td>'+
         '<td class="num cpr" style="padding:9px 10px" id="_tot_costo">'+fmt(tCosto)+'</td>'+
         '<td></td>'+
@@ -469,7 +486,7 @@ function pageCalc(){
     '<input type="date" value="'+S.rpIni+'" onchange="S.rpIni=this.value" style="width:138px;padding:5px 8px">'+
     '<label>al:</label>'+
     '<input type="date" value="'+S.rpFin+'" onchange="S.rpFin=this.value" style="width:138px;padding:5px 8px">'+
-    '<button class="btn sm bd" onclick="S.bonos={};renderAll()" style="margin-left:auto">✕ Limpiar bonos</button>'+
+    '<button class="btn sm bd" onclick="S.bonos={};S.prestamos={};renderAll()" style="margin-left:auto">✕ Limpiar bonos y préstamos</button>'+
   '</div>'+
   '<div class="stats">'+
     '<div class="stat"><div class="slbl">Neto final empleados</div><div class="sval cbl" id="_st_neto">'+fmt(tNetoFinal)+'</div><div class="ssub">base + bonos ('+pn+')</div></div>'+
@@ -478,6 +495,7 @@ function pageCalc(){
     '<div class="stat"><div class="slbl">Costo total empresa</div><div class="sval cpr" id="_st_costo">'+fmt(tCosto)+'</div><div class="ssub">incl. cuotas patronales</div></div>'+
   '</div>'+
   '<div class="infotl">Los bonos son libres de impuestos: no generan ISR, cuotas IMSS ni INFONAVIT. Se suman directamente al neto del trabajador en este periodo.</div>'+
+  '<div class="info" style="margin-bottom:14px">El descuento de préstamo se captura de forma manual por empleado y se resta del neto final en este periodo. No afecta el cálculo fiscal.</div>'+
   '<div class="card"><div class="ch">'+
     '<div>'+
       '<div class="ct">Desglose por empleado — '+pn+'</div>'+
@@ -507,6 +525,7 @@ function pageHist(){
         '<td class="num">'+fmt(e.ob)+'</td>'+
         '<td class="num cbl">'+fmt(e.netoBase)+'</td>'+
         '<td class="num ctl">'+fmt(e.bon)+'</td>'+
+        '<td class="num crd">'+fmt(e.prest||0)+'</td>'+
         '<td class="num cbl" style="font-weight:500">'+fmt(e.netoFinal)+'</td>'+
         '<td class="num cpr" style="font-size:11px">'+fmt(e.costo)+'</td>'+
       '</tr>';
@@ -522,7 +541,7 @@ function pageHist(){
         '<div style="font-size:16px;font-weight:500;color:var(--blue);font-family:\'IBM Plex Mono\',monospace">'+fmt(reg.totNetoFinal)+'</div>'+
       '</div></div>'+
       '<div style="overflow-x:auto;max-height:175px;overflow-y:auto">'+
-        '<table style="font-size:11px"><thead><tr><th>Empleado</th><th>Hacienda</th><th>Libre</th><th>ISR</th><th>IMSS ob.</th><th>Neto base</th><th>Bono</th><th>Neto final</th><th>Costo emp.</th></tr></thead>'+
+        '<table style="font-size:11px"><thead><tr><th>Empleado</th><th>Hacienda</th><th>Libre</th><th>ISR</th><th>IMSS ob.</th><th>Neto base</th><th>Bono</th><th>Desc. Préstamo</th><th>Neto final</th><th>Costo emp.</th></tr></thead>'+
         '<tbody>'+rows2+'</tbody></table></div>'+
       '<div style="padding:8px 12px;border-top:1px solid var(--bdr);display:flex;gap:6px">'+
         '<button class="btn sm" onclick="excelHist('+i+')">📊 Excel</button>'+
@@ -535,15 +554,17 @@ function pageHist(){
 
 function guardar(){
   if(!S.emp.length){ showToast('Sin empleados'); return; }
-  var p=S.period, totNetoBase=0, totNetoFinal=0, totCosto=0, totBono=0;
+  var p=S.period, totNetoBase=0, totNetoFinal=0, totCosto=0, totBono=0, totPrest=0;
   var emps=S.emp.map(function(e){
     var bon=getBono(e.id);
+    var prest=getPrestamo(e.id);
     var r=calcNomina(e.nominal,e.total,p,bon);
-    totNetoBase+=r.netoBase; totNetoFinal+=r.netoFinal;
-    totCosto+=r.costo; totBono+=bon;
-    return{ nombre:e.nombre, puesto:e.puesto||'', nom:r.nom, lib:r.lib, isrNeto:r.isrNeto, ob:r.ob.total, netoBase:r.netoBase, bon:bon, netoFinal:r.netoFinal, costo:r.costo };
+    var netoConPrest=r2(r.netoFinal - prest);
+    totNetoBase+=r.netoBase; totNetoFinal+=netoConPrest;
+    totCosto+=r.costo; totBono+=bon; totPrest+=prest;
+    return{ nombre:e.nombre, puesto:e.puesto||'', nom:r.nom, lib:r.lib, isrNeto:r.isrNeto, ob:r.ob.total, netoBase:r.netoBase, bon:bon, prest:prest, netoFinal:netoConPrest, costo:r.costo };
   });
-  S.hist.push({ id:gid(), fecha:hoy(), periodo:p, rpNombre:S.rpNombre, ini:S.rpIni, fin:S.rpFin, numEmp:S.emp.length, totNetoBase:totNetoBase, totNetoFinal:totNetoFinal, totBono:totBono, totCosto:totCosto, emp:emps });
+  S.hist.push({ id:gid(), fecha:hoy(), periodo:p, rpNombre:S.rpNombre, ini:S.rpIni, fin:S.rpFin, numEmp:S.emp.length, totNetoBase:totNetoBase, totNetoFinal:totNetoFinal, totBono:totBono, totPrest:totPrest, totCosto:totCosto, emp:emps });
   persist(); showToast('✓ Guardado en historial'); renderAll();
 }
 function limpiarHist(){ if(!confirm('¿Limpiar todo el historial?'))return; S.hist=[]; persist(); renderAll(); }
@@ -912,18 +933,20 @@ function buildDet(){
 // ═══════════════════════════════════════
 // EXPORTACIONES
 // ═══════════════════════════════════════
-function buildXls(emps,per,bonos){
-  var hd=['Empleado','Puesto','Frec.','Nómina Hacienda','Sueldo Libre','Total Recibe','Base ISR','ISR Bruto','Subsidio','ISR Neto','IMSS Obrero','Neto Base','Bono Periodo','Neto Final','IMSS Patronal','INFONAVIT','Costo Empresa'];
+function buildXls(emps,per,bonos,prestamos){
+  var hd=['Empleado','Puesto','Frec.','Nómina Hacienda','Sueldo Libre','Total Recibe','Base ISR','ISR Bruto','Subsidio','ISR Neto','IMSS Obrero','Neto Base','Bono Periodo','Desc. Préstamo','Neto Final','IMSS Patronal','INFONAVIT','Costo Empresa'];
   return [hd].concat(emps.map(function(e){
     var bon=bonos?(bonos[e.id]||e.bon||0):(e.bon||0);
+    var prest=prestamos?(prestamos[e.id]||e.prest||0):(e.prest||0);
     var r=calcNomina(e.nominal||e.nom, e.total||e.tot, per, bon);
-    return[e.nombre,e.puesto||'',e.freq||'quincenal',r.nom,r.lib,r.tot,r.baseISR,r.isrBruto,r.subsidio,r.isrNeto,r.ob.total,r.netoBase,bon,r.netoFinal,r.pat.total,r.info,r.costo];
+    var netoConPrest=r2(r.netoFinal - prest);
+    return[e.nombre,e.puesto||'',e.freq||'quincenal',r.nom,r.lib,r.tot,r.baseISR,r.isrBruto,r.subsidio,r.isrNeto,r.ob.total,r.netoBase,bon,prest,netoConPrest,r.pat.total,r.info,r.costo];
   }));
 }
 
 function excelCalc(){
   var wb=XLSX.utils.book_new();
-  var ws=XLSX.utils.aoa_to_sheet(buildXls(S.emp,S.period,S.bonos));
+  var ws=XLSX.utils.aoa_to_sheet(buildXls(S.emp,S.period,S.bonos,S.prestamos));
   ws['!cols']=[{wch:26},{wch:16},{wch:10}].concat(Array(14).fill({wch:14}));
   XLSX.utils.book_append_sheet(wb,ws,'Nomina');
   XLSX.writeFile(wb,'nomina_'+S.period+'_'+Date.now()+'.xlsx');
@@ -946,13 +969,15 @@ function excelRep(){
   showToast('✓ Excel descargado');
 }
 
-function makePDF(titulo,emps,per,bonos,rpN,ini,fin){
+function makePDF(titulo,emps,per,bonos,prestamos,rpN,ini,fin){
   var pStr=rpN?(rpN+(ini?' ('+ini+' al '+fin+')':'')):ini?(ini+' al '+fin):per.toUpperCase();
-  var tNeto=0,tISR=0,tCosto=0,tBono=0;
+  var tNeto=0,tISR=0,tCosto=0,tBono=0,tPrest=0;
   var rows=emps.map(function(e){
     var bon=bonos?(bonos[e.id]||e.bon||0):(e.bon||0);
+    var prest=prestamos?(prestamos[e.id]||e.prest||0):(e.prest||0);
     var r=calcNomina(e.nominal||e.nom, e.total||e.tot, per, bon);
-    tNeto+=r.netoFinal; tISR+=r.isrNeto; tCosto+=r.costo; tBono+=bon;
+    var netoConPrest=r2(r.netoFinal - prest);
+    tNeto+=netoConPrest; tISR+=r.isrNeto; tCosto+=r.costo; tBono+=bon; tPrest+=prest;
     return '<tr>'+
       '<td>'+e.nombre+'</td><td>'+(e.puesto||'—')+'</td>'+
       '<td>'+fmt(r.nom)+'</td><td style="color:#0F6E56">'+fmt(r.lib)+'</td>'+
@@ -960,7 +985,8 @@ function makePDF(titulo,emps,per,bonos,rpN,ini,fin){
       '<td>'+fmt(r.ob.total)+'</td>'+
       '<td>'+fmt(r.netoBase)+'</td>'+
       '<td style="color:#0F766E">'+fmt(bon)+'</td>'+
-      '<td style="font-weight:600;color:#1D4ED8">'+fmt(r.netoFinal)+'</td>'+
+      '<td style="color:#991B1B">'+fmt(prest)+'</td>'+
+      '<td style="font-weight:600;color:#1D4ED8">'+fmt(netoConPrest)+'</td>'+
       '<td style="color:#5B21B6;font-size:10px">'+fmt(r.costo)+'</td>'+
     '</tr>';
   }).join('');
@@ -978,11 +1004,12 @@ function makePDF(titulo,emps,per,bonos,rpN,ini,fin){
     '<div style="text-align:right"><div style="font-size:15px;font-weight:600">'+titulo+'</div><div class="meta">'+pStr+'</div></div></div>'+
     '<table><thead><tr>'+
       '<th>Empleado</th><th>Puesto</th><th>Hacienda</th><th>Libre</th>'+
-      '<th>ISR</th><th>IMSS Obrero</th><th>Neto Base</th><th>Bono</th><th>Neto Final</th><th>Costo Empresa</th>'+
+      '<th>ISR</th><th>IMSS Obrero</th><th>Neto Base</th><th>Bono</th><th>Desc. Préstamo</th><th>Neto Final</th><th>Costo Empresa</th>'+
     '</tr></thead><tbody>'+rows+'</tbody></table>'+
     '<div class="tb">'+
       '<div><div class="tl">Neto final empleados</div><div class="tv" style="color:#1D4ED8">'+fmt(tNeto)+'</div></div>'+
       '<div><div class="tl">Total bonos</div><div class="tv" style="color:#0F766E">'+fmt(tBono)+'</div></div>'+
+      '<div><div class="tl">Total desc. préstamos</div><div class="tv" style="color:#991B1B">'+fmt(tPrest)+'</div></div>'+
       '<div><div class="tl">ISR a enterar SAT</div><div class="tv" style="color:#991B1B">'+fmt(tISR)+'</div></div>'+
       '<div><div class="tl">Costo total empresa</div><div class="tv" style="color:#5B21B6">'+fmt(tCosto)+'</div></div>'+
     '</div>'+
@@ -991,13 +1018,13 @@ function makePDF(titulo,emps,per,bonos,rpN,ini,fin){
 }
 
 function openPDF(html){ var w=window.open('','_blank'); if(w){ w.document.write(html); w.document.close(); setTimeout(function(){ w.print(); },600); } showToast('✓ PDF listo'); }
-function pdfCalc(){ openPDF(makePDF('Nómina '+S.period, S.emp, S.period, S.bonos, S.rpNombre, S.rpIni, S.rpFin)); }
+function pdfCalc(){ openPDF(makePDF('Nómina '+S.period, S.emp, S.period, S.bonos, S.prestamos, S.rpNombre, S.rpIni, S.rpFin)); }
 function pdfHist(idx){
   var reg=S.hist[idx];
   var emps=reg.emp.map(function(e){ return Object.assign({},e,{nominal:e.nom,total:r2((e.nom||0)+(e.lib||0)),freq:'quincenal'}); });
-  openPDF(makePDF(reg.rpNombre||'Nómina '+reg.periodo, emps, reg.periodo, null, reg.rpNombre, reg.ini, reg.fin));
+  openPDF(makePDF(reg.rpNombre||'Nómina '+reg.periodo, emps, reg.periodo, null, null, reg.rpNombre, reg.ini, reg.fin));
 }
-function pdfRep(){ openPDF(makePDF('Reporte de plantilla', S.emp, 'mensual', {}, 'Reporte mensual','','')); }
+function pdfRep(){ openPDF(makePDF('Reporte de plantilla', S.emp, 'mensual', {}, {}, 'Reporte mensual','','')); }
 
 // ═══════════════════════════════════════
 // INIT
